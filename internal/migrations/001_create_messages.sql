@@ -14,10 +14,10 @@ CREATE TABLE "messages" (
                             level int,                                              -- message level (integer)
                             area text,                                              -- variable area (HR, IR, I, C)
                             addr text,                                              -- variable address in controller
-                            block text NULL,                                             -- use as block start
+                            block text NULL,                                        -- use as block start
                             type text,                                              -- type
-                            bit text NULL,                                               -- bit number in register
-                            invert_bit text NULL,                                        -- inverted bit flag
+                            bit text NULL,                                          -- bit number in register
+                            invert_bit text NULL,                                   -- inverted bit flag
                             created_at timestamp NOT NULL DEFAULT now()             -- timestamp of creation
 );
 

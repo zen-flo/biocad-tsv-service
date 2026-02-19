@@ -17,9 +17,9 @@ type Message struct {
 	Level     int       `db:"level" json:"level"`
 	Area      string    `db:"area" json:"area"`
 	Addr      string    `db:"addr" json:"addr"`
-	Block     string    `db:"block" json:"block"`
+	Block     *string   `db:"block" json:"block"`
 	Type      string    `db:"type" json:"type"`
-	Bit       string    `db:"bit" json:"bit"`
-	InvertBit string    `db:"invert_bit" json:"invert_bit"`
+	Bit       *string   `db:"bit" json:"bit"`
+	InvertBit *string   `db:"invert_bit" json:"invert_bit"`
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }

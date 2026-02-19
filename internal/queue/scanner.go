@@ -15,18 +15,22 @@ type Scanner struct {
 	Queue    chan<- string
 	QM       *Manager
 	Interval time.Duration
-	done     chan struct{}
 }
 
 // NewScanner creates a new Scanner
-func NewScanner(inputDir string, pfRepo *repository.ProcessedFileRepo, queue chan<- string, qm *Manager, interval time.Duration) *Scanner {
+func NewScanner(
+	inputDir string,
+	pfRepo *repository.ProcessedFileRepo,
+	queue chan<- string,
+	qm *Manager,
+	interval time.Duration,
+) *Scanner {
 	return &Scanner{
 		InputDir: inputDir,
 		PFRepo:   pfRepo,
 		Queue:    queue,
 		QM:       qm,
 		Interval: interval,
-		done:     make(chan struct{}),
 	}
 }
 
@@ -47,18 +51,11 @@ func (s *Scanner) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-s.done:
-				return
 			case <-ticker.C:
 				s.scan(ctx)
 			}
 		}
 	}()
-}
-
-// Stop stops the scanner
-func (s *Scanner) Stop() {
-	close(s.done)
 }
 
 // scan performs a single scan of the input directory

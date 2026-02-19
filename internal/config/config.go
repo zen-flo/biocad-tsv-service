@@ -6,6 +6,10 @@ import (
 	"os"
 )
 
+type ServerConfig struct {
+	Port string `yaml:"port"`
+}
+
 type DBConfig struct {
 	Host     string `yaml:"host"`
 	Port     int    `yaml:"port"`
@@ -20,8 +24,9 @@ type DirConfig struct {
 }
 
 type Config struct {
-	DB   DBConfig  `yaml:"db"`
-	Dirs DirConfig `yaml:"dirs"`
+	Server ServerConfig `yaml:"server"`
+	DB     DBConfig     `yaml:"db"`
+	Dirs   DirConfig    `yaml:"dirs"`
 }
 
 // LoadConfig reads the YAML file and returns Config
@@ -42,12 +47,15 @@ func LoadConfig(path string) (*Config, error) {
 
 // String brings the config to a string for easy logging
 func (c *Config) String() string {
-	return fmt.Sprintf("DB{host=%s, port=%d, user=%s}, Dirs{input=%s, output=%s}",
-		c.DB.Host, c.DB.Port, c.DB.User, c.Dirs.Input, c.Dirs.Output)
+	return fmt.Sprintf("Server{port=%s}, DB{host=%s, port=%d, user=%s}, Dirs{input=%s, output=%s}",
+		c.Server.Port, c.DB.Host, c.DB.Port, c.DB.User, c.Dirs.Input, c.Dirs.Output)
 }
 
 // Validate checks if the config fields are valid
 func (c *Config) Validate() error {
+	if c.Server.Port == "" {
+		return fmt.Errorf("server.port is required")
+	}
 	if c.DB.Host == "" {
 		return fmt.Errorf("db host is required")
 	}
@@ -56,6 +64,9 @@ func (c *Config) Validate() error {
 	}
 	if c.DB.User == "" {
 		return fmt.Errorf("db user is required")
+	}
+	if c.DB.Password == "" {
+		return fmt.Errorf("db password is required")
 	}
 	if c.DB.Name == "" {
 		return fmt.Errorf("db name is required")

@@ -70,3 +70,52 @@ func (r *MessageRepo) GetByUnitGUID(ctx context.Context, unitGUID uuid.UUID) ([]
 
 	return msgs, nil
 }
+
+func (r *MessageRepo) GetByUnitGUIDPaginated(
+	ctx context.Context,
+	unitGUID uuid.UUID,
+	limit, offset int,
+) ([]models.Message, error) {
+
+	rows, err := r.db.Query(ctx, `
+		SELECT id, mqtt, unit_guid, msg_id, text, context, class,
+		       level, area, addr, block, type, bit, invert_bit, created_at
+		FROM "messages"
+		WHERE unit_guid=$1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, unitGUID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("query messages failed: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []models.Message
+	for rows.Next() {
+		var m models.Message
+		if err := rows.Scan(
+			&m.ID, &m.MQTT, &m.UnitGUID, &m.MsgId, &m.Text,
+			&m.Context, &m.Class, &m.Level,
+			&m.Area, &m.Addr, &m.Block, &m.Type,
+			&m.Bit, &m.InvertBit, &m.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan message failed: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+
+	return msgs, rows.Err()
+}
+
+func (r *MessageRepo) CountByUnitGUID(ctx context.Context, unitGUID uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) 
+		FROM "messages"
+		WHERE unit_guid=$1
+	`, unitGUID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count messages failed: %w", err)
+	}
+	return count, nil
+}

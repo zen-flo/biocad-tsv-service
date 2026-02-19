@@ -1,6 +1,7 @@
 package main
 
 import (
+	"biocad-tsv-service/internal/api"
 	"biocad-tsv-service/internal/config"
 	"biocad-tsv-service/internal/database"
 	"biocad-tsv-service/internal/parser"
@@ -9,6 +10,7 @@ import (
 	"biocad-tsv-service/internal/repository"
 	"biocad-tsv-service/internal/util"
 	"context"
+	"github.com/google/uuid"
 	"log"
 	"os"
 	"os/signal"
@@ -48,6 +50,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// start API server
+	apiServer := api.NewServer(msgRepo)
+	apiServer.Start(ctx, cfg.Server.Port)
+
 	// channel for files queue
 	fileQueue := make(chan string, 100)
 	var wg sync.WaitGroup
@@ -71,7 +77,6 @@ func main() {
 	log.Println("[main] Shutdown signal received, stopping scanner and workers...")
 
 	cancel()         // cancel context for any ongoing operations
-	scanner.Stop()   // stop scanner
 	close(fileQueue) // signal workers to finish
 	wg.Wait()        // wait for all workers
 	log.Println("[main] Service stopped gracefully")
@@ -102,23 +107,23 @@ func worker(
 		messages, err := parser.ParseTSVFile(ctx, file, msgRepo, pfRepo, errRepo)
 		if err != nil {
 			log.Printf("[worker %d] failed to parse file %s: %v", id, file, err)
+			qm.Remove(file)
+			continue
 		} else {
 			log.Printf("[worker %d] successfully parsed file %s", id, file)
 		}
 
 		// generating a PDF for each unique unitGUID
-		unitGUIDMap := make(map[string]struct{})
+		unitGUIDMap := make(map[uuid.UUID]struct{})
 		for _, msg := range messages {
-			uuidStr := msg.UnitGUID.String()
-			if _, ok := unitGUIDMap[uuidStr]; ok {
-				continue
-			}
-			unitGUIDMap[uuidStr] = struct{}{}
+			unitGUIDMap[msg.UnitGUID] = struct{}{}
+		}
 
-			if err := pdf.GenerateUnitPDF(ctx, outDir, msg.UnitGUID, msgRepo); err != nil {
-				log.Printf("[worker %d] failed to generate PDF for %s: %v", id, msg.UnitGUID, err)
+		for unitGUID := range unitGUIDMap {
+			if err := pdf.GenerateUnitPDF(ctx, outDir, unitGUID, msgRepo); err != nil {
+				log.Printf("[worker %d] failed to generate PDF for %s: %v", id, unitGUID, err)
 			} else {
-				log.Printf("[worker %d] PDF generated for %s", id, msg.UnitGUID)
+				log.Printf("[worker %d] PDF generated for %s", id, unitGUID)
 			}
 		}
 

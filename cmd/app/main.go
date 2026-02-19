@@ -3,35 +3,125 @@ package main
 import (
 	"biocad-tsv-service/internal/config"
 	"biocad-tsv-service/internal/database"
+	"biocad-tsv-service/internal/parser"
+	"biocad-tsv-service/internal/pdf"
+	"biocad-tsv-service/internal/queue"
+	"biocad-tsv-service/internal/repository"
+	"biocad-tsv-service/internal/util"
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 )
+
+const numWorkers = 4
 
 func main() {
 	cfg, err := config.LoadConfig("config.yaml")
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Fatalf("[main] failed to load config: %v", err)
 	}
 
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("failed to validate config: %v", err)
+		log.Fatalf("[main] failed to validate config: %v", err)
 	}
 
 	dbPool, err := database.NewPool(cfg)
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		log.Fatalf("[main] failed to connect to database: %v", err)
 	}
 	defer dbPool.Close()
 
-	for _, dir := range []string{cfg.Dirs.Input, cfg.Dirs.Output} {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				log.Fatalf("failed to create directory: %s, error: %v", dir, err)
-			}
-			log.Printf("created missing directory: %s", dir)
-		}
+	util.EnsureDirs(cfg.Dirs.Input, cfg.Dirs.Output)
+
+	log.Printf("[main] Loaded config: %s", cfg)
+	log.Println("Service started successfully")
+
+	// create repositories
+	msgRepo := repository.NewMessageRepo(dbPool)
+	pfRepo := repository.NewProcessedFileRepo(dbPool)
+	errRepo := repository.NewParseErrorRepo(dbPool)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// channel for files queue
+	fileQueue := make(chan string, 100)
+	var wg sync.WaitGroup
+
+	queueManager := queue.New()
+
+	// start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(ctx, i, fileQueue, msgRepo, pfRepo, errRepo, queueManager, &wg, cfg.Dirs.Output)
 	}
 
-	log.Printf("Loaded config: %s", cfg)
-	log.Println("Service started successfully")
+	// start scanner
+	scanner := queue.NewScanner(cfg.Dirs.Input, pfRepo, fileQueue, queueManager, 30*time.Second)
+	scanner.Start(ctx)
+
+	// graceful shutdown
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	log.Println("[main] Shutdown signal received, stopping scanner and workers...")
+
+	cancel()         // cancel context for any ongoing operations
+	scanner.Stop()   // stop scanner
+	close(fileQueue) // signal workers to finish
+	wg.Wait()        // wait for all workers
+	log.Println("[main] Service stopped gracefully")
+}
+
+// worker processes files from the queue
+func worker(
+	ctx context.Context,
+	id int,
+	queue <-chan string,
+	msgRepo *repository.MessageRepo,
+	pfRepo *repository.ProcessedFileRepo,
+	errRepo *repository.ParseErrorRepo,
+	qm *queue.Manager,
+	wg *sync.WaitGroup,
+	outDir string,
+) {
+	defer wg.Done()
+	for file := range queue {
+		select {
+		case <-ctx.Done():
+			log.Printf("[worker %d] context canceled, exiting", id)
+			return
+		default:
+		}
+
+		log.Printf("[worker %d] processing file: %s", id, file)
+		messages, err := parser.ParseTSVFile(ctx, file, msgRepo, pfRepo, errRepo)
+		if err != nil {
+			log.Printf("[worker %d] failed to parse file %s: %v", id, file, err)
+		} else {
+			log.Printf("[worker %d] successfully parsed file %s", id, file)
+		}
+
+		// generating a PDF for each unique unitGUID
+		unitGUIDMap := make(map[string]struct{})
+		for _, msg := range messages {
+			uuidStr := msg.UnitGUID.String()
+			if _, ok := unitGUIDMap[uuidStr]; ok {
+				continue
+			}
+			unitGUIDMap[uuidStr] = struct{}{}
+
+			if err := pdf.GenerateUnitPDF(ctx, outDir, msg.UnitGUID, msgRepo); err != nil {
+				log.Printf("[worker %d] failed to generate PDF for %s: %v", id, msg.UnitGUID, err)
+			} else {
+				log.Printf("[worker %d] PDF generated for %s", id, msg.UnitGUID)
+			}
+		}
+
+		qm.Remove(file)
+	}
 }

@@ -61,3 +61,19 @@ func (r *ProcessedFileRepo) List(ctx context.Context, limit, offset int) ([]mode
 
 	return files, nil
 }
+
+// IsProcessed checks if a file with the given filename has already been processed successfully
+func (r *ProcessedFileRepo) IsProcessed(ctx context.Context, filename string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+        SELECT EXISTS(
+            SELECT 1 
+            FROM processed_files 
+            WHERE filename=$1 AND status='success'
+        )
+    `, filename).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if file is processed: %w", err)
+	}
+	return exists, nil
+}

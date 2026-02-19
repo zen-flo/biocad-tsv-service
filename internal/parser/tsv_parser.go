@@ -41,24 +41,24 @@ func ParseTSVFile(
 	msgRepo *repository.MessageRepo,
 	pfRepo *repository.ProcessedFileRepo,
 	errRepo *repository.ParseErrorRepo,
-) error {
+) ([]*models.Message, error) {
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", filePath, err)
+		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
-	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
+	defer func() {
+		if err := f.Close(); err != nil {
 			log.Printf("failed to close file %s", filePath)
 		}
-	}(f)
+	}()
 
 	reader := csv.NewReader(f)
 	reader.Comma = '\t'
 	reader.FieldsPerRecord = -1 // allow variable number of columns
 
 	var hadErrors bool
+	var processedMessages []*models.Message
 
 	for {
 		record, err := reader.Read()
@@ -66,7 +66,7 @@ func ParseTSVFile(
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to read record from TSV file %s: %w", filePath, err)
+			return processedMessages, fmt.Errorf("failed to read record from TSV file %s: %w", filePath, err)
 		}
 
 		if len(record) < expectedCols {
@@ -137,6 +137,8 @@ func ParseTSVFile(
 				ErrorText: fmt.Sprintf("database insert failed: %v", err),
 				CreatedAt: time.Now(),
 			})
+		} else {
+			processedMessages = append(processedMessages, msg)
 		}
 	}
 
@@ -145,12 +147,16 @@ func ParseTSVFile(
 		status = "failed"
 	}
 
-	return pfRepo.Insert(ctx, &models.ProcessedFile{
+	if err := pfRepo.Insert(ctx, &models.ProcessedFile{
 		ID:          uuid.New(),
 		Filename:    filePath,
 		ProcessedAt: time.Now(),
 		Status:      status,
-	})
+	}); err != nil {
+		log.Printf("failed to mark file %s as processed: %v", filePath, err)
+	}
+
+	return processedMessages, nil
 }
 
 func emptyToNil(value string) *string {
